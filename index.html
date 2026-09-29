@@ -3475,56 +3475,43 @@ const storage = {
   }
 };
 
-// ---------- RANKING CLOUD (JSONBin.io) ----------
-const JSONBIN_BIN_ID = '6a03146aadc21f119a8b5b98';
-const JSONBIN_MASTER_KEY = '$2a$10$NCu.tu.2j7k/VFSQvvPaleR1AAQITcV97TVDDMBfFV8V62GDiT5j6';
-const JSONBIN_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
+// ---------- RANKING CLOUD (Google Sheets + Apps Script) ----------
+// URL de la aplicación web de Apps Script (termina en /exec). Ver ranking_apps_script.gs
+const RANKING_URL = 'https://script.google.com/macros/s/AKfycbwxulBhfJFWAoKa18DXJgnY0y-uCilcs_k7PQI4eIZHdIBuF2W_mVnBt6RIMN8EEYTSHw/exec';
+
+// POST con text/plain para evitar la petición previa CORS que Apps Script no admite
+async function cloudPost(body) {
+  const res = await fetch(RANKING_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
 
 async function cloudFetch() {
   try {
-    const res = await fetch(`${JSONBIN_URL}/latest`, {
-      method: 'GET',
-      headers: { 'X-Master-Key': JSONBIN_MASTER_KEY }
-    });
+    const res = await fetch(RANKING_URL);
     if (!res.ok) return null;
     const data = await res.json();
+    if (!data.ok) return null;
     return data.record || { rankings: [] };
   } catch (e) { return null; }
 }
 
 async function cloudUpdate(record) {
   try {
-    const res = await fetch(JSONBIN_URL, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': JSONBIN_MASTER_KEY
-      },
-      body: JSON.stringify(record)
-    });
-    return res.ok;
+    const data = await cloudPost({ action: 'replace', record });
+    return !!(data && data.ok);
   } catch (e) { return false; }
 }
 
+// El servidor combina el récord (solo guarda si mejora y respeta el bloqueo)
 async function cloudPushRanking(category, value) {
   if (!State.pilot) return;
   try {
-    const current = await cloudFetch();
-    if (!current) return;
-    // Si el ranking está bloqueado por el admin, los alumnos no escriben (excepto mododios)
-    const isGod = State.pilot && State.pilot.toLowerCase() === 'mododios';
-    if (current.locked && !isGod) return;
-    if (!current.rankings) current.rankings = [];
-    const key = `${State.pilot}|${category}`;
-    const existing = current.rankings.find(r => `${r.pilot}|${r.category}` === key);
-    if (existing) {
-      if (value <= existing.value) return; // no es mejor
-      existing.value = value;
-      existing.ts = Date.now();
-    } else {
-      current.rankings.push({ pilot: State.pilot, category, value, ts: Date.now() });
-    }
-    await cloudUpdate(current);
+    await cloudPost({ action: 'push', pilot: State.pilot, category, value });
   } catch (e) { /* silent */ }
 }
 
